@@ -109,7 +109,7 @@ func (s *Store) CalculateBatchCostDetailsForUsage(usage *schemas.BifrostLLMUsage
 	}
 
 	switch normalizeStreamRequestType(requestType) {
-	case schemas.BatchResultsRequest:
+	case schemas.BatchResultsRequest, schemas.ChatCompletionRequest, schemas.TextCompletionRequest, schemas.ResponsesRequest, schemas.EmbeddingRequest:
 		if usage.PromptTokens > 0 && pricing.InputCostPerTokenBatches == nil {
 			return BatchCostDetails{}
 		}
@@ -584,7 +584,48 @@ func computeBatchTextCost(pricing *configstoreTables.TableModelPricing, usage *s
 
 	inputCost := 0.0
 	if usage.PromptTokens > 0 {
-		inputCost = float64(usage.PromptTokens) * *pricing.InputCostPerTokenBatches
+		promptTokens := usage.PromptTokens
+		cachedReadTokens := 0
+		cachedWriteTokens := 0
+		cachedWriteTokensAbove1hr := 0
+		if usage.PromptTokensDetails != nil {
+			cachedReadTokens = usage.PromptTokensDetails.CachedReadTokens
+			cachedWriteTokens = usage.PromptTokensDetails.CachedWriteTokens
+			if usage.PromptTokensDetails.CachedWriteTokenDetails != nil {
+				cachedWriteTokensAbove1hr = usage.PromptTokensDetails.CachedWriteTokenDetails.CachedWriteTokens1h
+			}
+		}
+		cachedReadTokens = min(max(cachedReadTokens, 0), promptTokens)
+		cachedWriteTokens = min(max(cachedWriteTokens, 0), promptTokens-cachedReadTokens)
+		cachedWriteTokensAbove1hr = min(max(cachedWriteTokensAbove1hr, 0), cachedWriteTokens)
+
+		batchInputRate := *pricing.InputCostPerTokenBatches
+		cacheReadRate := batchInputRate
+		cacheWriteRate := batchInputRate
+		cacheWriteAbove1hrRate := batchInputRate
+		// Catalog cache rates describe synchronous pricing. Batch discounts stack
+		// with prompt-cache multipliers, so scale each cache category by the same
+		// batch/input ratio instead of charging cached tokens as ordinary input.
+		if pricing.InputCostPerToken != nil && *pricing.InputCostPerToken > 0 {
+			batchRatio := batchInputRate / *pricing.InputCostPerToken
+			if pricing.CacheReadInputTokenCost != nil {
+				cacheReadRate = *pricing.CacheReadInputTokenCost * batchRatio
+			}
+			if pricing.CacheCreationInputTokenCost != nil {
+				cacheWriteRate = *pricing.CacheCreationInputTokenCost * batchRatio
+			}
+			if pricing.CacheCreationInputTokenCostAbove1hr != nil {
+				cacheWriteAbove1hrRate = *pricing.CacheCreationInputTokenCostAbove1hr * batchRatio
+			} else {
+				cacheWriteAbove1hrRate = cacheWriteRate
+			}
+		}
+
+		nonCachedPrompt := promptTokens - cachedReadTokens - cachedWriteTokens
+		inputCost = float64(nonCachedPrompt)*batchInputRate +
+			float64(cachedReadTokens)*cacheReadRate +
+			float64(cachedWriteTokens-cachedWriteTokensAbove1hr)*cacheWriteRate +
+			float64(cachedWriteTokensAbove1hr)*cacheWriteAbove1hrRate
 	}
 
 	outputCost := 0.0

@@ -287,9 +287,10 @@ const (
 // reconcilers can share the same cluster-safe claim.
 type BatchJob struct {
 	ID                    string     `gorm:"primaryKey;type:varchar(512)" json:"id"`
-	Provider              string     `gorm:"type:varchar(255);index:idx_batch_jobs_identity,priority:1;index:idx_batch_jobs_sweeper,priority:1;not null" json:"provider"`
-	BatchID               string     `gorm:"type:varchar(255);index:idx_batch_jobs_identity,priority:2;not null" json:"batch_id"`
+	Provider              string     `gorm:"type:varchar(255);uniqueIndex:idx_batch_jobs_identity,priority:1;index:idx_batch_jobs_sweeper,priority:1;not null" json:"provider"`
+	BatchID               string     `gorm:"type:varchar(255);uniqueIndex:idx_batch_jobs_identity,priority:2;not null" json:"batch_id"`
 	Model                 string     `gorm:"type:varchar(255)" json:"model,omitempty"`
+	Endpoint              string     `gorm:"type:varchar(255)" json:"endpoint,omitempty"`
 	ProviderStatus        string     `gorm:"type:varchar(50)" json:"provider_status,omitempty"`
 	InputFileID           string     `gorm:"type:varchar(255)" json:"input_file_id,omitempty"`
 	OutputFileID          *string    `gorm:"type:varchar(255)" json:"output_file_id,omitempty"`

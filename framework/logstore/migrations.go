@@ -236,6 +236,7 @@ var logstoreMigrationSteps = []migrationStep{
 	{IDs: []string{"logs_add_routing_engine_logs_column"}, run: migrationAddRoutingEngineLogsColumn},
 	{IDs: []string{"async_jobs_init"}, run: migrationCreateAsyncJobsTable},
 	{IDs: []string{"batch_jobs_init"}, run: migrationCreateBatchJobsTable},
+	{IDs: []string{"batch_jobs_add_endpoint_column"}, run: migrationAddBatchJobsEndpointColumn},
 	{IDs: []string{"logs_add_metadata_column"}, run: migrationAddMetadataColumn},
 	{IDs: []string{"mcp_tool_logs_add_metadata_column"}, run: migrationAddMetadataColumnToMCPToolLogs},
 	{IDs: []string{"logs_add_histogram_composite_indexes"}, run: migrationAddHistogramCompositeIndexes},
@@ -1600,6 +1601,25 @@ func migrationCreateBatchJobsTable(ctx context.Context, db *gorm.DB, logger sche
 	err := m.Migrate()
 	if err != nil {
 		return fmt.Errorf("error while creating batch_jobs table: %s", err.Error())
+	}
+	return nil
+}
+
+func migrationAddBatchJobsEndpointColumn(ctx context.Context, db *gorm.DB, logger schemas.Logger) error {
+	migrationName := "batch_jobs_add_endpoint_column"
+	logger.Info("[logstore] starting migration %s", migrationName)
+	defer logger.Info("[logstore] finished migration %s", migrationName)
+	m := migrator.New(db, migrator.DefaultOptions, []*migrator.Migration{{
+		ID: migrationName,
+		Migrate: func(tx *gorm.DB) error {
+			return addColumnIfNotExists(tx.WithContext(ctx), logger, &BatchJob{}, "endpoint")
+		},
+		Rollback: func(tx *gorm.DB) error {
+			return tx.WithContext(ctx).Migrator().DropColumn(&BatchJob{}, "endpoint")
+		},
+	}})
+	if err := m.Migrate(); err != nil {
+		return fmt.Errorf("error while adding batch_jobs endpoint column: %s", err.Error())
 	}
 	return nil
 }

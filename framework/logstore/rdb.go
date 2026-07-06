@@ -418,17 +418,26 @@ func BatchJobID(provider, batchID string) string {
 	return fmt.Sprintf("batch-job:%s:%s", provider, batchID)
 }
 
-func (s *RDBLogStore) UpsertBatchJob(ctx context.Context, job *BatchJob) error {
+func validateBatchJobIdentity(job *BatchJob) error {
 	if job == nil {
 		return fmt.Errorf("batch job is nil")
 	}
 	if job.Provider == "" || job.BatchID == "" {
 		return fmt.Errorf("batch job provider and batch_id are required")
 	}
-	now := time.Now().UTC()
-	if job.ID == "" {
-		job.ID = BatchJobID(job.Provider, job.BatchID)
+	canonicalID := BatchJobID(job.Provider, job.BatchID)
+	if job.ID != "" && job.ID != canonicalID {
+		return fmt.Errorf("batch job id %q does not match canonical id %q", job.ID, canonicalID)
 	}
+	job.ID = canonicalID
+	return nil
+}
+
+func (s *RDBLogStore) UpsertBatchJob(ctx context.Context, job *BatchJob) error {
+	if err := validateBatchJobIdentity(job); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
 	if job.AccountingStatus == "" {
 		job.AccountingStatus = BatchJobAccountingStatusPending
 	}
@@ -448,6 +457,9 @@ func (s *RDBLogStore) UpsertBatchJob(ctx context.Context, job *BatchJob) error {
 	updates := map[string]interface{}{"updated_at": now}
 	if job.Model != "" {
 		updates["model"] = job.Model
+	}
+	if job.Endpoint != "" {
+		updates["endpoint"] = job.Endpoint
 	}
 	if job.ProviderStatus != "" {
 		updates["provider_status"] = job.ProviderStatus
@@ -470,7 +482,9 @@ func (s *RDBLogStore) UpsertBatchJob(ctx context.Context, job *BatchJob) error {
 	if job.PollAttempts > 0 {
 		updates["poll_attempts"] = job.PollAttempts
 	}
-	if IsTerminalBatchProviderStatus(job.ProviderStatus) && job.ProviderStatus != string(schemas.BatchStatusCompleted) {
+	if IsTerminalBatchProviderStatus(job.ProviderStatus) &&
+		job.ProviderStatus != string(schemas.BatchStatusCompleted) &&
+		job.ProviderStatus != string(schemas.BatchStatusEnded) {
 		updates["next_check_at"] = nil
 	}
 
@@ -643,16 +657,16 @@ func (s *RDBLogStore) finishBatchJobAccounting(ctx context.Context, jobID string
 	if jobID == "" || claimToken == "" {
 		return fmt.Errorf("batch job id and claim token are required")
 	}
-	msg := ""
+	var lastError any
 	if err != nil {
-		msg = err.Error()
+		lastError = err.Error()
 	}
 	now := time.Now().UTC()
 	updates := map[string]interface{}{
 		"accounting_status": status,
 		"claim_token":       nil,
 		"claim_expires_at":  nil,
-		"last_error":        msg,
+		"last_error":        lastError,
 		"updated_at":        now,
 	}
 	if reason != "" {
