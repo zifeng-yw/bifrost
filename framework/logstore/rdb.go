@@ -4194,3 +4194,80 @@ func (s *RDBLogStore) DeleteStaleAsyncJobs(ctx context.Context, staleSince time.
 		Delete(&AsyncJob{})
 	return result.RowsAffected, result.Error
 }
+
+// CreateWebhookDelivery appends one webhook delivery attempt record. The
+// history table is insert-only: rows are never updated after creation.
+func (s *RDBLogStore) CreateWebhookDelivery(ctx context.Context, delivery *WebhookDelivery) error {
+	return s.db.WithContext(ctx).Create(delivery).Error
+}
+
+// FindWebhookDeliveryByID retrieves a webhook delivery attempt by its ID.
+func (s *RDBLogStore) FindWebhookDeliveryByID(ctx context.Context, id string) (*WebhookDelivery, error) {
+	var delivery WebhookDelivery
+	result := s.db.WithContext(ctx).Where("id = ?", id).First(&delivery)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, result.Error
+	}
+	return &delivery, nil
+}
+
+// SearchWebhookDeliveries returns one page of delivery history for an
+// endpoint, newest attempts first.
+func (s *RDBLogStore) SearchWebhookDeliveries(ctx context.Context, endpointID string, pagination PaginationOptions) (*WebhookDeliverySearchResult, error) {
+	limit := pagination.Limit
+	if limit <= 0 || limit > defaultMaxSearchLimit {
+		limit = defaultMaxSearchLimit
+	}
+	var total int64
+	if err := s.db.WithContext(ctx).Model(&WebhookDelivery{}).
+		Where("endpoint_id = ?", endpointID).
+		Count(&total).Error; err != nil {
+		return nil, err
+	}
+	deliveries := []WebhookDelivery{}
+	query := s.db.WithContext(ctx).
+		Where("endpoint_id = ?", endpointID).
+		Order("created_at DESC, id DESC").
+		Limit(limit)
+	if pagination.Offset > 0 {
+		query = query.Offset(pagination.Offset)
+	}
+	if err := query.Find(&deliveries).Error; err != nil {
+		return nil, err
+	}
+	result := &WebhookDeliverySearchResult{
+		Deliveries: deliveries,
+		Pagination: pagination,
+	}
+	result.Pagination.Limit = limit
+	result.Pagination.TotalCount = total
+	return result, nil
+}
+
+// DeleteExpiredWebhookDeliveries deletes delivery history whose expires_at has passed.
+// Rows with a null expires_at are kept.
+// Deletes in batches to avoid long-running transactions that hold row locks.
+func (s *RDBLogStore) DeleteExpiredWebhookDeliveries(ctx context.Context) (int64, error) {
+	now := time.Now().UTC()
+	const batchLimit = 100
+	var totalDeleted int64
+	for {
+		result := s.db.WithContext(ctx).
+			Where("id IN (?)",
+				s.db.Model(&WebhookDelivery{}).Select("id").
+					Where("expires_at IS NOT NULL AND expires_at < ?", now).
+					Limit(batchLimit),
+			).Delete(&WebhookDelivery{})
+		if result.Error != nil {
+			return totalDeleted, result.Error
+		}
+		totalDeleted += result.RowsAffected
+		if result.RowsAffected < batchLimit {
+			break
+		}
+	}
+	return totalDeleted, nil
+}
