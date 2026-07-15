@@ -7399,6 +7399,43 @@ func (s *RDBConfigStore) GetWebhookEndpoints(ctx context.Context) ([]tables.Tabl
 	return endpoints, nil
 }
 
+// GetWebhookEndpointsPaginated returns one page of webhook endpoints matching
+// the given filters, along with the total match count for pagination.
+func (s *RDBConfigStore) GetWebhookEndpointsPaginated(ctx context.Context, params WebhookEndpointsQueryParams) ([]tables.TableWebhookEndpoint, int64, error) {
+	query := s.DB().WithContext(ctx).Model(&tables.TableWebhookEndpoint{})
+	if params.Search != "" {
+		// Raw OR conditions are parenthesized explicitly so they AND cleanly
+		// with the other filters.
+		needle := "%" + strings.ToLower(params.Search) + "%"
+		query = query.Where("(LOWER(name) LIKE ? OR LOWER(url) LIKE ?)", needle, needle)
+	}
+	if params.Disabled != nil {
+		query = query.Where("disabled = ?", *params.Disabled)
+	}
+	if len(params.Events) > 0 {
+		// Events are stored as a JSON string array; a quoted-substring match
+		// selects endpoints subscribed to any of the requested events.
+		conditions := make([]string, 0, len(params.Events))
+		args := make([]any, 0, len(params.Events))
+		for _, event := range params.Events {
+			conditions = append(conditions, "events_json LIKE ?")
+			args = append(args, `%"`+event+`"%`)
+		}
+		query = query.Where("("+strings.Join(conditions, " OR ")+")", args...)
+	}
+
+	var totalCount int64
+	if err := query.Count(&totalCount).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var endpoints []tables.TableWebhookEndpoint
+	if err := query.Order("created_at ASC, id ASC").Offset(params.Offset).Limit(params.Limit).Find(&endpoints).Error; err != nil {
+		return nil, 0, err
+	}
+	return endpoints, totalCount, nil
+}
+
 // GetWebhookEndpointByID retrieves a webhook endpoint by its ID.
 func (s *RDBConfigStore) GetWebhookEndpointByID(ctx context.Context, id string) (*tables.TableWebhookEndpoint, error) {
 	var endpoint tables.TableWebhookEndpoint
