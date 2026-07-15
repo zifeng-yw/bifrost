@@ -372,15 +372,17 @@ func (d *Dispatcher) attempt(job tables.TableWebhookJob, endpoint *tables.TableW
 		// Nothing to deliver to anymore; retire the job with a terminal
 		// history record. No counter updates: there was no receiver attempt,
 		// and the endpoint is already gone or disabled.
-		d.finalize(job, attemptNo, attemptResult{errText: "webhook endpoint deleted or disabled"}, logstore.WebhookDeliveryOutcomePermanentFailure, now, false, tuning)
+		d.finalize(job, attemptNo, "", attemptResult{errText: "webhook endpoint deleted or disabled"}, logstore.WebhookDeliveryOutcomePermanentFailure, now, false, tuning, leaseUntil)
 		return
 	}
 
 	var body []byte
 	var err error
+	var requestID string
 	asyncJob, findErr := d.logStore.FindAsyncJobByID(d.baseCtx, job.AsyncJobID)
 	switch {
 	case findErr == nil:
+		requestID = asyncJob.RequestID
 		body, err = renderPayload(asyncJob, job.Event, endpoint.IncludeResponse, tuning.maxResponsePayloadBytes, now)
 	case errors.Is(findErr, logstore.ErrNotFound):
 		// The job row must have existed for this delivery to be queued, so
@@ -411,7 +413,7 @@ func (d *Dispatcher) attempt(job tables.TableWebhookJob, endpoint *tables.TableW
 	if outcome == logstore.WebhookDeliveryOutcomeRetryableFailure && attemptNo > tuning.maxRetries {
 		outcome = logstore.WebhookDeliveryOutcomeExhausted
 	}
-	d.finalize(job, attemptNo, result, outcome, now, true, tuning)
+	d.finalize(job, attemptNo, requestID, result, outcome, now, true, tuning, leaseUntil)
 }
 
 // finalize persists an attempt: history first, then the queue row, then the
@@ -420,13 +422,14 @@ func (d *Dispatcher) attempt(job tables.TableWebhookJob, endpoint *tables.TableW
 // receiver's webhook-id dedupe absorbs the duplicate. touchCounters is false
 // when no receiver was attempted (endpoint gone), which must not move the
 // failure streak.
-func (d *Dispatcher) finalize(job tables.TableWebhookJob, attemptNo int, result attemptResult, outcome logstore.WebhookDeliveryOutcome, now time.Time, touchCounters bool, tuning endpointTuning) {
+func (d *Dispatcher) finalize(job tables.TableWebhookJob, attemptNo int, requestID string, result attemptResult, outcome logstore.WebhookDeliveryOutcome, now time.Time, touchCounters bool, tuning endpointTuning, leaseUntil time.Time) {
 	expiresAt := now.Add(d.historyRetention)
 	history := &logstore.WebhookDelivery{
 		ID:         uuid.NewString(),
 		WebhookID:  job.ID,
 		EndpointID: job.EndpointID,
 		AsyncJobID: job.AsyncJobID,
+		RequestID:  requestID,
 		Event:      job.Event,
 		AttemptNo:  attemptNo,
 		Outcome:    outcome,

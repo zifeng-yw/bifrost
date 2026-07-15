@@ -294,18 +294,22 @@ export function WebhookDetailsSheet({ endpoint, isTesting, testCooldown, onTest,
 												</TableCell>
 												<TableCell className="whitespace-nowrap">{relativeTime(latest.created_at)}</TableCell>
 												<TableCell onClick={(e) => e.stopPropagation()}>
-													<Tooltip>
-														<TooltipTrigger asChild>
-															<code
-																className="cursor-pointer font-mono text-xs"
-																onClick={() => copy(latest.async_job_id)}
-																data-testid={`webhook-delivery-request-id-${run.key}`}
-															>
-																{latest.async_job_id.slice(0, 8)}…
-															</code>
-														</TooltipTrigger>
-														<TooltipContent className="font-mono">{latest.async_job_id}</TooltipContent>
-													</Tooltip>
+													{latest.request_id ? (
+														<Tooltip>
+															<TooltipTrigger asChild>
+																<code
+																	className="cursor-pointer font-mono text-xs"
+																	onClick={() => copy(latest.request_id ?? "")}
+																	data-testid={`webhook-delivery-request-id-${run.key}`}
+																>
+																	{latest.request_id.slice(0, 8)}…
+																</code>
+															</TooltipTrigger>
+															<TooltipContent className="font-mono">{latest.request_id}</TooltipContent>
+														</Tooltip>
+													) : (
+														"-"
+													)}
 												</TableCell>
 												<TableCell className="whitespace-nowrap">
 													<div className="flex items-center gap-1">
