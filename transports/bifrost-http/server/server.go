@@ -27,6 +27,7 @@ import (
 	"github.com/maximhq/bifrost/framework/sidekiq"
 	"github.com/maximhq/bifrost/framework/temptoken"
 	"github.com/maximhq/bifrost/framework/tracing"
+	"github.com/maximhq/bifrost/framework/webhooks"
 	"github.com/maximhq/bifrost/plugins/governance"
 	"github.com/maximhq/bifrost/plugins/governance/complexity"
 	"github.com/maximhq/bifrost/plugins/logging"
@@ -182,6 +183,8 @@ type BifrostHTTPServer struct {
 
 	SidekiqRunner         *sidekiq.Runner
 	SidekiqDispatcherStop func()
+
+	WebhookDispatcher *webhooks.Dispatcher
 
 	wsPool *bfws.Pool
 }
@@ -1525,6 +1528,8 @@ func (s *BifrostHTTPServer) RegisterAPIRoutes(ctx context.Context, callbacks Ser
 	if skillsHandler != nil {
 		skillsHandler.RegisterRoutes(s.Router, middlewares...)
 	}
+	webhookHandler := handlers.NewWebhookHandler(s.Config, s.WebhookDispatcher)
+	webhookHandler.RegisterRoutes(s.Router, middlewares...)
 	skillsServingHandler := handlers.NewSkillsServingHandler(s.Config.ConfigStore, s.Config.ObjectStore)
 	if skillsServingHandler != nil {
 		skillsServingHandler.RegisterRoutes(s.Router, middlewares...)
@@ -1768,11 +1773,25 @@ func (s *BifrostHTTPServer) Bootstrap(ctx context.Context) error {
 		return fmt.Errorf("failed to instantiate plugins: %v", err)
 	}
 
+	// Initialize the webhook delivery dispatcher (requires both stores; the
+	// in-memory endpoint store on Config serves endpoint lookups).
+	if s.Config.LogsStore != nil && s.Config.ConfigStore != nil {
+		s.WebhookDispatcher = webhooks.NewDispatcher(ctx, "", s.Config.ClientConfig.WebhookConfig.DeliveryHistoryRetention(), s.Config.ConfigStore, s.Config.LogsStore, s.Config, logger)
+		s.WebhookDispatcher.Start()
+		logger.Info("webhook dispatcher initialized")
+	}
+
 	// Initialize async job executor (requires LogsStore + governance plugin)
 	if s.Config.LogsStore != nil {
 		governancePlugin, govErr := lib.FindPluginAs[governance.BaseGovernancePlugin](s.Config, s.getGovernancePluginName())
 		if govErr == nil {
-			s.Config.AsyncJobExecutor = logstore.NewAsyncJobExecutor(s.Config.LogsStore, governancePlugin.GetGovernanceStore(), nil, logger)
+			// The dispatcher interface value must stay nil when no dispatcher
+			// exists — a typed-nil pointer would defeat the executor's nil check.
+			var jobDispatcher logstore.WebhookDispatcher
+			if s.WebhookDispatcher != nil {
+				jobDispatcher = s.WebhookDispatcher
+			}
+			s.Config.AsyncJobExecutor = logstore.NewAsyncJobExecutor(s.Config.LogsStore, governancePlugin.GetGovernanceStore(), jobDispatcher, logger)
 			logger.Info("async job executor initialized")
 		}
 	}
@@ -2057,6 +2076,10 @@ func (s *BifrostHTTPServer) Start() error {
 			if s.AsyncJobCleaner != nil {
 				logger.Info("stopping async job cleaner...")
 				s.AsyncJobCleaner.StopCleanupRoutine()
+			}
+			if s.WebhookDispatcher != nil {
+				logger.Info("stopping webhook dispatcher...")
+				s.WebhookDispatcher.Stop()
 			}
 			if s.WSTicketStore != nil {
 				logger.Info("stopping ws ticket store...")
