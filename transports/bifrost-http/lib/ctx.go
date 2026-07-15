@@ -565,7 +565,6 @@ func ConvertToBifrostContext(ctx *fasthttp.RequestCtx, store HandlerStore) (*sch
 			}
 			return true
 		}
-
 		// Compat header: per-request override of compat plugin settings.
 		// Accepts: "true" (enable all), JSON array of feature names, or ["*"] (enable all).
 		// An empty array [] or absent header means no overrides.
@@ -603,6 +602,15 @@ func ConvertToBifrostContext(ctx *fasthttp.RequestCtx, store HandlerStore) (*sch
 						}
 					}
 				}
+			}
+			return true
+		}
+		// Async webhook header: names the webhook endpoint to notify when the
+		// async job finishes. Carried as-is; the submit path validates it.
+		if keyStr == "x-bf-async-webhook" {
+			valueStr := strings.TrimSpace(string(value))
+			if valueStr != "" {
+				bifrostCtx.SetValue(schemas.BifrostContextKeyAsyncWebhookEndpoint, valueStr)
 			}
 			return true
 		}

@@ -607,3 +607,33 @@ func TestConvertToBifrostContext_APIKeyHeaderNonVirtualKeyIgnored(t *testing.T) 
 		t.Fatalf("virtual key should not be set from a non-VK api-key value, got %#v", got)
 	}
 }
+
+func TestConvertToBifrostContext_AsyncWebhookHeader(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+		want   string
+	}{
+		{name: "value carried as-is", header: "billing", want: "billing"},
+		{name: "value trimmed", header: "  billing  ", want: "billing"},
+		{name: "blank header ignored", header: "   ", want: ""},
+		{name: "absent header ignored", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := &fasthttp.RequestCtx{}
+			if tc.header != "" {
+				ctx.Request.Header.Set("x-bf-async-webhook", tc.header)
+			}
+			bifrostCtx, cancel := ConvertToBifrostContext(ctx, testHandlerStore{})
+			if bifrostCtx == nil {
+				t.Fatal("expected a bifrost context")
+			}
+			defer cancel()
+			got, _ := bifrostCtx.Value(schemas.BifrostContextKeyAsyncWebhookEndpoint).(string)
+			if got != tc.want {
+				t.Fatalf("context webhook endpoint = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
