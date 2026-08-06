@@ -1,5 +1,6 @@
 {
   "$schema": "https://www.getbifrost.ai/schema",
+  "encryption_key": "env.BIFROST_ENCRYPTION_KEY",
   "config_store": {
     "enabled": true,
     "type": "sqlite",
@@ -21,13 +22,20 @@
     "enable_logging": true,
     "disable_content_logging": false,
     "log_retention_days": 365,
-    "enforce_auth_on_inference": false,
+    "enforce_auth_on_inference": true,
     "allowed_origins": [
       "*"
     ],
     "max_request_body_size_mb": 100,
     "compat": {
       "should_convert_params": false
+    }
+  },
+  "governance": {
+    "auth_config": {
+      "admin_username": "env.BIFROST_ADMIN_USERNAME",
+      "admin_password": "env.BIFROST_ADMIN_PASSWORD",
+      "is_enabled": true
     }
   },
   "framework": {

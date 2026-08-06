@@ -1,11 +1,18 @@
 services:
   bifrost:
-    image: maximhq/bifrost:v1.4.3
+    build:
+      context: ../..
+      dockerfile: transports/Dockerfile.local
+      args:
+        VERSION: local
+    image: bifrost:latest
     container_name: bifrost
     ports:
-      - "8080:8080"
+      - "${BIFROST_BIND_ADDRESS:-127.0.0.1}:8080:8080"
     volumes:
       - ./data:/app/data
+    env_file:
+      - .env
     environment:
       - APP_PORT=8080
       - APP_HOST=0.0.0.0
