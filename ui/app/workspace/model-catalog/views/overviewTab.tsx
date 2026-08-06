@@ -60,7 +60,7 @@ export default function OverviewTab({ hasAccess }: OverviewTabProps) {
 		error: providersError,
 		refetch: refetchProviders,
 	} = useGetProvidersQuery(undefined, { skip: !hasAccess });
-	const { data: modelsData } = useGetModelsQuery({ unfiltered: true }, { skip: !hasAccess });
+	const { data: modelsData } = useGetModelsQuery({}, { skip: !hasAccess });
 
 	const [triggerGlobalStats, { data: globalStats }] = useLazyGetLogsStatsQuery();
 	const [triggerStats] = useLazyGetLogsStatsQuery();

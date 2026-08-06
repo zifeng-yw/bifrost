@@ -81,7 +81,6 @@ export default function AttributesTab({ hasAccess }: AttributesTabProps) {
 			provider: providerFilter || undefined,
 			limit: PAGE_SIZE,
 			offset,
-			unfiltered: true,
 		},
 		{ skip: !hasAccess },
 	);
