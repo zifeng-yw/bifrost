@@ -4075,6 +4075,11 @@
         "disable_store": {
           "type": "boolean",
           "description": "Disable OpenAI Responses API conversation storage."
+        },
+        "codex_oauth": {
+          "type": "boolean",
+          "description": "Use ChatGPT Codex OAuth credentials from the provider key value for model discovery and streaming Responses requests.",
+          "default": false
         }
       },
       "additionalProperties": false

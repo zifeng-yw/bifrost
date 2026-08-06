@@ -405,6 +405,7 @@ export interface CustomProviderConfig {
 // OpenAIConfig holds OpenAI-specific provider configuration.
 export interface OpenAIConfig {
 	disable_store?: boolean;
+	codex_oauth?: boolean;
 }
 
 // ProviderConfig matching Go's lib.ProviderConfig

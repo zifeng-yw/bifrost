@@ -6364,6 +6364,19 @@ func (c *Config) UpdateProviderKey(ctx context.Context, provider schemas.ModelPr
 	return nil
 }
 
+func (c *Config) StoreCodexOAuthCredentials(ctx context.Context, provider schemas.ModelProvider, keyID string, credentials schemas.CodexOAuthCredentials) error {
+	key, err := c.GetProviderKeyRaw(provider, keyID)
+	if err != nil {
+		return err
+	}
+	value, err := sonic.MarshalString(credentials)
+	if err != nil {
+		return fmt.Errorf("marshal Codex OAuth credentials: %w", err)
+	}
+	key.Value = *schemas.NewSecretVar(value)
+	return c.UpdateProviderKey(ctx, provider, keyID, *key)
+}
+
 // RemoveProviderKey removes a single key from an existing provider configuration.
 func (c *Config) RemoveProviderKey(ctx context.Context, provider schemas.ModelProvider, keyID string) error {
 	c.Mu.Lock()

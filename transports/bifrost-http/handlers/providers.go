@@ -64,16 +64,19 @@ type ProviderHandler struct {
 	inMemoryStore *lib.Config
 	client        *bifrost.Bifrost
 	modelsManager ModelsManager
+	codexOAuth    *codexOAuthWebService
 }
 
 // NewProviderHandler creates a new provider handler instance
 func NewProviderHandler(modelsManager ModelsManager, inMemoryStore *lib.Config, client *bifrost.Bifrost) *ProviderHandler {
-	return &ProviderHandler{
+	handler := &ProviderHandler{
 		dbStore:       inMemoryStore.ConfigStore,
 		inMemoryStore: inMemoryStore,
 		client:        client,
 		modelsManager: modelsManager,
 	}
+	handler.codexOAuth = newCodexOAuthWebService(handler)
+	return handler
 }
 
 type ProviderStatus = string
@@ -154,6 +157,10 @@ func (h *ProviderHandler) RegisterRoutes(r *router.Router, middlewares ...schema
 	// newly served model (or re-check a failing key) without waiting.
 	r.POST("/api/providers/{provider}/refresh-models", lib.ChainMiddlewares(h.refreshProviderModels, middlewares...))
 	r.POST("/api/providers/{provider}/keys/{key_id}/refresh-models", lib.ChainMiddlewares(h.refreshProviderKeyModels, middlewares...))
+	r.GET("/api/providers/{provider}/codex-oauth", lib.ChainMiddlewares(h.getCodexOAuthConnection, middlewares...))
+	r.POST("/api/providers/{provider}/codex-oauth/start", lib.ChainMiddlewares(h.startCodexOAuth, middlewares...))
+	r.GET("/api/providers/{provider}/codex-oauth/flows/{flow_id}", lib.ChainMiddlewares(h.getCodexOAuthFlow, middlewares...))
+	r.DELETE("/api/providers/{provider}/codex-oauth", lib.ChainMiddlewares(h.disconnectCodexOAuth, middlewares...))
 	r.GET("/api/keys", lib.ChainMiddlewares(h.listKeys, middlewares...))
 	r.GET("/api/models", lib.ChainMiddlewares(h.listModels, middlewares...))
 	r.GET("/api/models/details", lib.ChainMiddlewares(h.listModelDetails, middlewares...))

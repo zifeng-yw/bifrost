@@ -144,6 +144,22 @@ export interface ListBaseModelsResponse {
 	total: number;
 }
 
+export interface CodexOAuthConnectionResponse {
+	connected: boolean;
+}
+
+export interface CodexOAuthStartResponse {
+	flow_id: string;
+	user_code: string;
+	verification_uri: string;
+	interval: number;
+}
+
+export interface CodexOAuthFlowResponse {
+	status: "pending" | "complete" | "failed";
+	error?: string;
+}
+
 type UpdateProviderMutationArg = UpdateProviderRequest & {
 	name: ModelProviderName;
 };
@@ -201,6 +217,35 @@ export const providersApi = baseApi.injectEndpoints({
 		getProviderKey: builder.query<ModelProviderKey, { provider: string; keyId: string }>({
 			query: ({ provider, keyId }) => `/providers/${encodeURIComponent(provider)}/keys/${encodeURIComponent(keyId)}`,
 			providesTags: (result, error, { provider }) => [{ type: "ProviderKeys", id: provider }],
+		}),
+
+		getCodexOAuthConnection: builder.query<CodexOAuthConnectionResponse, string>({
+			query: (provider) => `/providers/${encodeURIComponent(provider)}/codex-oauth`,
+			providesTags: (result, error, provider) => [{ type: "Providers", id: `codex-oauth-${provider}` }],
+		}),
+
+		startCodexOAuth: builder.mutation<CodexOAuthStartResponse, string>({
+			query: (provider) => ({
+				url: `/providers/${encodeURIComponent(provider)}/codex-oauth/start`,
+				method: "POST",
+			}),
+		}),
+
+		getCodexOAuthFlow: builder.query<CodexOAuthFlowResponse, { provider: string; flowId: string }>({
+			query: ({ provider, flowId }) => `/providers/${encodeURIComponent(provider)}/codex-oauth/flows/${encodeURIComponent(flowId)}`,
+		}),
+
+		disconnectCodexOAuth: builder.mutation<CodexOAuthConnectionResponse, string>({
+			query: (provider) => ({
+				url: `/providers/${encodeURIComponent(provider)}/codex-oauth`,
+				method: "DELETE",
+			}),
+			invalidatesTags: (result, error, provider) => [
+				"Providers",
+				{ type: "Providers", id: `codex-oauth-${provider}` },
+				{ type: "Providers", id: provider },
+				{ type: "ProviderKeys", id: provider },
+			],
 		}),
 
 		// Create new provider
@@ -524,6 +569,10 @@ export const {
 	useGetProviderQuery,
 	useGetProviderKeysQuery,
 	useGetProviderKeyQuery,
+	useGetCodexOAuthConnectionQuery,
+	useStartCodexOAuthMutation,
+	useGetCodexOAuthFlowQuery,
+	useDisconnectCodexOAuthMutation,
 	useCreateProviderMutation,
 	useUpdateProviderMutation,
 	useCreateProviderKeyMutation,

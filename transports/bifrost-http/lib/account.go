@@ -101,5 +101,6 @@ func (baseAccount *BaseAccount) GetConfigForProvider(providerKey schemas.ModelPr
 	if config.OpenAIConfig != nil {
 		providerConfig.OpenAIConfig = config.OpenAIConfig
 	}
+	providerConfig.CodexOAuthCredentialStore = baseAccount.store
 	return providerConfig, nil
 }

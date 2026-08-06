@@ -2,6 +2,7 @@ package integrations
 
 import (
 	bifrost "github.com/maximhq/bifrost/core"
+	openaiProvider "github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/bifrost-http/lib"
 	"github.com/valyala/fasthttp"
@@ -54,7 +55,7 @@ func NewOpenAIPassthroughRouter(client *bifrost.Bifrost, handlerStore lib.Handle
 func NewChatGPTPassthroughRouter(client *bifrost.Bifrost, handlerStore lib.HandlerStore, logger schemas.Logger) *PassthroughRouter {
 	return NewPassthroughRouter(client, handlerStore, logger, &PassthroughConfig{
 		Provider:    schemas.OpenAI,
-		UpstreamURL: "https://chatgpt.com",
+		UpstreamURL: openaiProvider.ChatGPTBaseURL,
 		StripPrefix: []string{
 			"/chatgpt_passthrough",
 		},

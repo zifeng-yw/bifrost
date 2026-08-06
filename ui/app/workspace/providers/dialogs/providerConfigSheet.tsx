@@ -72,7 +72,7 @@ export default function ProviderConfigSheet({ show, onCancel, provider }: Props)
 	const [selectedTab, setSelectedTab] = useState<string | undefined>(undefined);
 	const hasGovernanceAccess = useRbac(RbacResource.Governance, RbacOperation.View);
 	const hasCustomProviderConfig = !!provider.custom_provider_config;
-	const isOpenAI = provider.name === "openai";
+	const isOpenAI = provider.name === "openai" || provider.custom_provider_config?.base_provider_type === "openai";
 	const isAnthropicFamily = ANTHROPIC_FAMILY_PROVIDERS.includes(provider.name.toLowerCase());
 
 	const tabs = useMemo(() => {

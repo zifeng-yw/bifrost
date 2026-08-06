@@ -32,6 +32,7 @@ type OpenAIProvider struct {
 	sendBackRawResponse  bool                          // Whether to include raw response in BifrostResponse
 	customProviderConfig *schemas.CustomProviderConfig // Custom provider config
 	disableStore         bool                          // Whether to force store=false on outgoing requests
+	codexOAuth           *codexOAuthManager            // Codex OAuth token manager, enabled only for Responses API access
 }
 
 // NewOpenAIProvider creates a new OpenAI provider instance.
@@ -61,11 +62,20 @@ func NewOpenAIProvider(config *schemas.ProviderConfig, logger schemas.Logger) *O
 	client = providerUtils.ConfigureDialer(client, config.NetworkConfig.AllowPrivateNetwork)
 	client = providerUtils.ConfigureTLS(client, config.NetworkConfig, logger)
 	streamingClient := providerUtils.BuildStreamingClient(client)
+	codexOAuthEnabled := config.OpenAIConfig != nil && config.OpenAIConfig.CodexOAuth
 	// Set default BaseURL if not provided
 	if config.NetworkConfig.BaseURL == "" {
-		config.NetworkConfig.BaseURL = "https://api.openai.com"
+		if codexOAuthEnabled {
+			config.NetworkConfig.BaseURL = ChatGPTBackendBaseURL
+		} else {
+			config.NetworkConfig.BaseURL = "https://api.openai.com"
+		}
 	}
 	config.NetworkConfig.BaseURL = strings.TrimRight(config.NetworkConfig.BaseURL, "/")
+	var codexOAuth *codexOAuthManager
+	if codexOAuthEnabled {
+		codexOAuth = newCodexOAuthManager(client, logger, providerUtils.GetProviderName(schemas.OpenAI, config.CustomProviderConfig), config.CodexOAuthCredentialStore)
+	}
 
 	return &OpenAIProvider{
 		logger:               logger,
@@ -75,7 +85,8 @@ func NewOpenAIProvider(config *schemas.ProviderConfig, logger schemas.Logger) *O
 		sendBackRawRequest:   config.SendBackRawRequest,
 		sendBackRawResponse:  config.SendBackRawResponse,
 		customProviderConfig: config.CustomProviderConfig,
-		disableStore:         config.OpenAIConfig != nil && config.OpenAIConfig.DisableStore,
+		disableStore:         config.OpenAIConfig != nil && (config.OpenAIConfig.DisableStore || config.OpenAIConfig.CodexOAuth),
+		codexOAuth:           codexOAuth,
 	}
 }
 
@@ -98,6 +109,9 @@ func (provider *OpenAIProvider) ListModels(ctx *schemas.BifrostContext, keys []s
 		return nil, err
 	}
 	providerName := provider.GetProviderKey()
+	if provider.codexOAuth != nil {
+		return provider.listCodexModels(ctx, keys, request)
+	}
 
 	if provider.customProviderConfig != nil && provider.customProviderConfig.IsKeyLess {
 		return providerUtils.HandleKeylessListModelsRequest(providerName, func() (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
@@ -1537,7 +1551,6 @@ func (provider *OpenAIProvider) Responses(ctx *schemas.BifrostContext, key schem
 		}
 		request.Params.Store = schemas.Ptr(false)
 	}
-
 	return HandleOpenAIResponsesRequest(
 		ctx,
 		provider.client,
@@ -1717,13 +1730,24 @@ func (provider *OpenAIProvider) ResponsesStream(ctx *schemas.BifrostContext, pos
 		request.Params.Store = schemas.Ptr(false)
 	}
 
+	authHeaders, bifrostErr := provider.responsesAuthHeaders(ctx, key)
+	if bifrostErr != nil {
+		return nil, bifrostErr
+	}
+	defaultPath := "/v1/responses"
+	var postRequestConverter func(*OpenAIResponsesRequest) *OpenAIResponsesRequest
+	if provider.codexOAuth != nil {
+		defaultPath = "/codex/responses"
+		postRequestConverter = prepareCodexOAuthResponsesRequest
+	}
+
 	// Use shared streaming logic
 	return HandleOpenAIResponsesStreaming(
 		ctx,
 		provider.streamingClient,
-		provider.buildRequestURL(ctx, "/v1/responses", schemas.ResponsesStreamRequest),
+		provider.buildRequestURL(ctx, defaultPath, schemas.ResponsesStreamRequest),
 		request,
-		BearerAuthHeader(key),
+		authHeaders,
 		provider.networkConfig.ExtraHeaders,
 		provider.networkConfig.StreamIdleTimeoutInSeconds,
 		providerUtils.ShouldSendBackRawRequest(ctx, provider.sendBackRawRequest),
@@ -1732,7 +1756,7 @@ func (provider *OpenAIProvider) ResponsesStream(ctx *schemas.BifrostContext, pos
 		postHookRunner,
 		nil,
 		nil,
-		nil,
+		postRequestConverter,
 		nil,
 		nil,
 		provider.logger,
@@ -7567,26 +7591,15 @@ func (provider *OpenAIProvider) Passthrough(
 		return nil, err
 	}
 
-	url := provider.buildPassthroughURL(req)
-
 	fasthttpReq := fasthttp.AcquireRequest()
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseResponse(resp)
 	defer fasthttp.ReleaseRequest(fasthttpReq)
 
 	fasthttpReq.Header.SetMethod(req.Method)
-	fasthttpReq.SetRequestURI(url)
-
-	providerUtils.SetExtraHeaders(ctx, fasthttpReq, provider.networkConfig.ExtraHeaders, nil)
-
-	for k, v := range req.SafeHeaders {
-		fasthttpReq.Header.Set(k, v)
+	if bifrostErr := provider.preparePassthroughRequest(ctx, key, req, fasthttpReq); bifrostErr != nil {
+		return nil, bifrostErr
 	}
-
-	if key.Value.GetValue() != "" {
-		fasthttpReq.Header.Set("Authorization", "Bearer "+key.Value.GetValue())
-	}
-
 	fasthttpReq.SetBody(req.Body)
 
 	latency, bifrostErr, wait := providerUtils.MakeRequestWithContext(ctx, provider.client, fasthttpReq, resp)
@@ -7651,6 +7664,28 @@ func (provider *OpenAIProvider) buildPassthroughURL(req *schemas.BifrostPassthro
 	return url
 }
 
+func (provider *OpenAIProvider) preparePassthroughRequest(ctx *schemas.BifrostContext, key schemas.Key, req *schemas.BifrostPassthroughRequest, fasthttpReq *fasthttp.Request) *schemas.BifrostError {
+	fasthttpReq.SetRequestURI(provider.buildPassthroughURL(req))
+	providerUtils.SetExtraHeaders(ctx, fasthttpReq, provider.networkConfig.ExtraHeaders, nil)
+	for header, value := range req.SafeHeaders {
+		fasthttpReq.Header.Set(header, value)
+	}
+
+	authHeaders := BearerAuthHeader(key)
+	if strings.TrimRight(req.UpstreamURL, "/") == ChatGPTBaseURL {
+		var bifrostErr *schemas.BifrostError
+		isResponsesRequest := strings.TrimRight(req.Path, "/") == "/backend-api/codex/responses"
+		authHeaders, bifrostErr = provider.chatGPTHeaders(ctx, key, isResponsesRequest)
+		if bifrostErr != nil {
+			return bifrostErr
+		}
+	}
+	for header, value := range authHeaders {
+		fasthttpReq.Header.Set(header, value)
+	}
+	return nil
+}
+
 func (provider *OpenAIProvider) PassthroughStream(
 	ctx *schemas.BifrostContext,
 	postHookRunner schemas.PostHookRunner,
@@ -7663,7 +7698,6 @@ func (provider *OpenAIProvider) PassthroughStream(
 	}
 
 	providerUtils.SetStreamIdleTimeoutIfEmpty(ctx, provider.networkConfig.StreamIdleTimeoutInSeconds)
-	url := provider.buildPassthroughURL(req)
 
 	fasthttpReq := fasthttp.AcquireRequest()
 	resp := fasthttp.AcquireResponse()
@@ -7671,20 +7705,11 @@ func (provider *OpenAIProvider) PassthroughStream(
 	defer fasthttp.ReleaseRequest(fasthttpReq)
 
 	fasthttpReq.Header.SetMethod(req.Method)
-	fasthttpReq.SetRequestURI(url)
-
-	providerUtils.SetExtraHeaders(ctx, fasthttpReq, provider.networkConfig.ExtraHeaders, nil)
-
-	for k, v := range req.SafeHeaders {
-		fasthttpReq.Header.Set(k, v)
+	if bifrostErr := provider.preparePassthroughRequest(ctx, key, req, fasthttpReq); bifrostErr != nil {
+		providerUtils.ReleaseStreamingResponse(ctx, resp)
+		return nil, bifrostErr
 	}
-
 	fasthttpReq.Header.Set("Connection", "close")
-
-	if key.Value.GetValue() != "" {
-		fasthttpReq.Header.Set("Authorization", "Bearer "+key.Value.GetValue())
-	}
-
 	fasthttpReq.SetBody(req.Body)
 
 	activeClient := providerUtils.PrepareResponseStreaming(ctx, provider.streamingClient, resp)

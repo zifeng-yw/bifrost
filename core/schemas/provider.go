@@ -554,18 +554,29 @@ type ProviderConfig struct {
 	NetworkConfig            NetworkConfig            `json:"network_config"`              // Network configuration
 	ConcurrencyAndBufferSize ConcurrencyAndBufferSize `json:"concurrency_and_buffer_size"` // Concurrency settings
 	// Logger instance, can be provided by the user or bifrost default logger is used if not provided
-	Logger                  Logger                `json:"-"`
-	ProxyConfig             *ProxyConfig          `json:"proxy_config,omitempty"`     // Proxy configuration
-	SendBackRawRequest      bool                  `json:"send_back_raw_request"`      // Send raw request back in the bifrost response (default: false)
-	SendBackRawResponse     bool                  `json:"send_back_raw_response"`     // Send raw response back in the bifrost response (default: false)
-	StoreRawRequestResponse bool                  `json:"store_raw_request_response"` // Capture raw request/response for internal logging only; strip from API responses returned to clients (default: false)
-	CustomProviderConfig    *CustomProviderConfig `json:"custom_provider_config,omitempty"`
-	OpenAIConfig            *OpenAIConfig         `json:"openai_config,omitempty"`
+	Logger                    Logger                    `json:"-"`
+	ProxyConfig               *ProxyConfig              `json:"proxy_config,omitempty"`     // Proxy configuration
+	SendBackRawRequest        bool                      `json:"send_back_raw_request"`      // Send raw request back in the bifrost response (default: false)
+	SendBackRawResponse       bool                      `json:"send_back_raw_response"`     // Send raw response back in the bifrost response (default: false)
+	StoreRawRequestResponse   bool                      `json:"store_raw_request_response"` // Capture raw request/response for internal logging only; strip from API responses returned to clients (default: false)
+	CustomProviderConfig      *CustomProviderConfig     `json:"custom_provider_config,omitempty"`
+	OpenAIConfig              *OpenAIConfig             `json:"openai_config,omitempty"`
+	CodexOAuthCredentialStore CodexOAuthCredentialStore `json:"-"`
+}
+
+type CodexOAuthCredentials struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+type CodexOAuthCredentialStore interface {
+	StoreCodexOAuthCredentials(ctx context.Context, provider ModelProvider, keyID string, credentials CodexOAuthCredentials) error
 }
 
 // OpenAIConfig holds OpenAI-specific provider configuration.
 type OpenAIConfig struct {
 	DisableStore bool `json:"disable_store"` // When true, forces store=false on all outgoing OpenAI requests (default: false)
+	CodexOAuth   bool `json:"codex_oauth"`   // When true, uses Codex OAuth credentials from the key value for Responses API requests
 }
 
 func (config *ProviderConfig) CheckAndSetDefaults() {
