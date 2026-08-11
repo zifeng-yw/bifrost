@@ -164,6 +164,8 @@ var anthropicResponsesStreamStatePool = sync.Pool{
 // anthropicToResponsesStreamState holds per-request state for the Bifrost→Anthropic
 // stream conversion direction.
 type anthropicToResponsesStreamState struct {
+	seenClientToolUse bool
+
 	// webSearchItemIDs tracks item IDs for WebSearch tools so their argument deltas
 	// can be skipped and regenerated synthetically (with sanitization) at output_item.done.
 	webSearchItemIDs map[string]bool
@@ -2650,6 +2652,23 @@ func (chunk *AnthropicStreamEvent) ToBifrostResponsesStream(ctx context.Context,
 	return nil, nil, false
 }
 
+func inferAnthropicStreamStopReason(ctx *schemas.BifrostContext, response *schemas.BifrostResponsesResponse) AnthropicStopReason {
+	if response != nil {
+		if response.StopReason != nil {
+			return ConvertBifrostFinishReasonToAnthropic(*response.StopReason)
+		}
+		for _, message := range response.Output {
+			if message.Type != nil && *message.Type == schemas.ResponsesMessageTypeFunctionCall && message.ResponsesReasoning == nil && message.ResponsesToolMessage != nil {
+				return AnthropicStopReasonToolUse
+			}
+		}
+	}
+	if getOrCreateAnthropicToResponsesStreamState(ctx).seenClientToolUse {
+		return AnthropicStopReasonToolUse
+	}
+	return AnthropicStopReasonEndTurn
+}
+
 // ToAnthropicResponsesStreamResponse converts a Bifrost Responses stream response
 // to Anthropic SSE frames, enforcing the content-block invariant every Anthropic
 // client assembles against: a content_block_delta must match the type its
@@ -3055,6 +3074,9 @@ func toAnthropicResponsesStreamEvents(ctx *schemas.BifrostContext, bifrostResp *
 					streamResp.ContentBlock = contentBlock
 				}
 			}
+		}
+		if streamResp.ContentBlock != nil && streamResp.ContentBlock.Type == AnthropicContentBlockTypeToolUse {
+			addedState.seenClientToolUse = true
 		}
 
 		// Generate synthetic input_json_delta events for tool calls with arguments
@@ -3561,22 +3583,16 @@ func toAnthropicResponsesStreamEvents(ctx *schemas.BifrostContext, bifrostResp *
 		if alreadyEmitted, ok := ctx.Value(schemas.BifrostContextKeyHasEmittedMessageDelta).(bool); ok && alreadyEmitted {
 			return []*AnthropicStreamEvent{streamResp}
 		}
+		stopReason := inferAnthropicStreamStopReason(ctx, bifrostResp.Response)
 		anthropicContentDeltaEvent := &AnthropicStreamEvent{
 			Type: AnthropicStreamEventTypeMessageDelta,
 			Delta: &AnthropicStreamDelta{
-				StopReason:   schemas.Ptr(AnthropicStopReasonEndTurn),
-				StopSequence: schemas.Ptr(""),
+				StopReason: &stopReason,
 			},
 		}
 		// Convert usage from Bifrost to Anthropic
 		if bifrostResp.Response != nil {
 			anthropicContentDeltaEvent.Usage = ConvertBifrostUsageToAnthropicUsage(bifrostResp.Response.Usage)
-			if bifrostResp.Response.StopReason != nil {
-				anthropicContentDeltaEvent.Delta = &AnthropicStreamDelta{
-					StopReason:   schemas.Ptr(ConvertBifrostFinishReasonToAnthropic(*bifrostResp.Response.StopReason)),
-					StopSequence: nil,
-				}
-			}
 			if sd := stopDetailsToAnthropic(bifrostResp.Response.StopDetails); sd != nil {
 				if anthropicContentDeltaEvent.Delta == nil {
 					anthropicContentDeltaEvent.Delta = &AnthropicStreamDelta{}
